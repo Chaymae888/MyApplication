@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/bottom_scanner"
+        android:title="Scanner"
+        android:icon="@drawable/scanner_icone"/>
+    <item
+        android:id="@+id/bottom_search"
+        android:title="@string/rechercher"
+        android:icon="@drawable/round_search_24"/>
+    <item
+        android:id="@+id/bottom_favoris"
+        android:title="Favoris"
+        android:icon="@drawable/heart_icon"/>
+    <item
+        android:id="@+id/bottom_profil"
+        android:title="Profil"
+        android:icon="@drawable/baseline_profil_24"/>
+
+
+</menu>
