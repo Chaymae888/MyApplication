@@ -1,5 +1,6 @@
 package com.example.myapplication;
 
+import android.app.ProgressDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.SpannableString;
@@ -10,12 +11,15 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
 
 import com.example.myapplication.R;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
@@ -29,10 +33,14 @@ public class login extends AppCompatActivity {
     Button SignIn;
     TextView SignUpRedirectText;
 
+    private FirebaseAuth auth;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_login);
+
+        auth = FirebaseAuth.getInstance();
 
 
         TextView textView = findViewById(R.id.SignUpRedirectText);
@@ -58,11 +66,11 @@ public class login extends AppCompatActivity {
         SignIn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(!validateEmail() | !validatePassword()) {
+                if(!validateEmail() || !validatePassword()) {
 
                 }else{
 
-                    checkUser();
+                    loginUser();
 
                 }
             }});
@@ -93,36 +101,49 @@ public class login extends AppCompatActivity {
 
     }
 
-    public void checkUser() {
+    public void loginUser() {
+        final ProgressDialog progressDialog = new ProgressDialog(this);
+        progressDialog.setTitle("Set your profile");
+        progressDialog.setMessage("Please wait while we are checking your data");
+        progressDialog.show();
+
         String email = Email.getText().toString().trim();
         String password = Password.getText().toString().trim();
 
+        auth.signInWithEmailAndPassword(email, password).addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                FirebaseUser currentUser = auth.getCurrentUser();
+                if (currentUser != null) {
+                    checkUserInDatabase(currentUser,progressDialog);
+                } else {
+                    Toast.makeText(login.this, "Login failed. Please try again.", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                Toast.makeText(login.this, "Login failed. Please check your credentials.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void checkUserInDatabase(FirebaseUser currentUser,ProgressDialog progressDialog) {
         DatabaseReference ref = FirebaseDatabase.getInstance().getReference("users");
-        Query checkUserDB = ref.orderByChild("email").equalTo(email);
-        checkUserDB.addListenerForSingleValueEvent(new ValueEventListener() {
+        ref.child(currentUser.getUid()).addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
                 if (snapshot.exists()) {
-                    Email.setError(null);
-                    for (DataSnapshot ds : snapshot.getChildren()) {
-                        String passwordFromDB = ds.child("password").getValue(String.class);
-
-                        if (passwordFromDB != null && passwordFromDB.equals(password)) {
-                            Password.setError(null);
-                            Intent i = new Intent(login.this, home.class);
-                            startActivity(i);
-                            return;
-                        }
-                    }
-                    Password.setError("Invalid Credentials");
-                    Password.requestFocus();
+                    progressDialog.dismiss();
+                    Intent i = new Intent(login.this, home.class);
+                    startActivity(i);
                 } else {
-                    Email.setError("User does not exist");
+
+                    progressDialog.dismiss();
+                    Toast.makeText(login.this, "User not found in database.", Toast.LENGTH_SHORT).show();
                 }
             }
 
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
+
+                progressDialog.dismiss();
                 Log.e("DATABASE_ERROR", "Database error: " + error.getMessage());
             }
         });

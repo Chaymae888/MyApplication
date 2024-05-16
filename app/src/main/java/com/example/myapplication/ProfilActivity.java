@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.Button;
@@ -83,8 +84,14 @@ public class ProfilActivity extends AppCompatActivity {
         if (getSupportActionBar() != null) {
             getSupportActionBar().setBackgroundDrawable(new ColorDrawable(ContextCompat.getColor(this, R.color.green)));
         }
-
         FirebaseApp.initializeApp(this);
+        auth = FirebaseAuth.getInstance();
+        databaseReference = FirebaseDatabase.getInstance().getReference().child("users");
+        storageReference = FirebaseStorage.getInstance().getReference();
+
+      
+
+
 
         textViewUsername=findViewById(R.id.textView7);
         textViewUsername2=findViewById(R.id.textView2);
@@ -195,9 +202,7 @@ public class ProfilActivity extends AppCompatActivity {
 
 
 
-        auth = FirebaseAuth.getInstance();
-        databaseReference = FirebaseDatabase.getInstance().getReference().child("users");
-        storageReference = FirebaseStorage.getInstance().getReference().child("profile_images");
+
 
         imageview = findViewById(R.id.imageView4);
 
@@ -220,8 +225,9 @@ public class ProfilActivity extends AppCompatActivity {
 
     private void getUserinfo() {
         FirebaseUser currentUser = auth.getCurrentUser();
+        databaseReference= FirebaseDatabase.getInstance().getReference().child("users");
         if (currentUser != null) {
-            databaseReference.child(currentUser.getEmail()).addValueEventListener(new ValueEventListener() {
+            databaseReference.child(currentUser.getUid()).addValueEventListener(new ValueEventListener() {
                 @Override
                 public void onDataChange(@NonNull DataSnapshot snapshot) {
                     if (snapshot.exists() && snapshot.getChildrenCount() > 0) {
@@ -244,15 +250,18 @@ public class ProfilActivity extends AppCompatActivity {
     }
 
 
-    private void uploadProfileImage() {
+    private void uploadProfileImage(Uri imageUri) {
         final ProgressDialog progressDialog = new ProgressDialog(this);
         progressDialog.setTitle("Set your profile");
         progressDialog.setMessage("Please wait while we are setting your data");
         progressDialog.show();
 
         if (imageUri != null) {
-            final StorageReference fileRef = storageReference.child(auth.getCurrentUser().getEmail() + ".jpg");
-            uploadTask = fileRef.putFile(imageUri);
+            // Generate a unique filename or path for the image
+            String imageName = "profile_" + System.currentTimeMillis() + ".jpg";
+
+            final StorageReference fileRef = storageReference.child(imageName);
+            UploadTask uploadTask = fileRef.putFile(imageUri);
 
             uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
                 @Override
@@ -266,32 +275,63 @@ public class ProfilActivity extends AppCompatActivity {
             }).addOnCompleteListener(new OnCompleteListener<Uri>() {
                 @Override
                 public void onComplete(@NonNull Task<Uri> task) {
-                    progressDialog.dismiss(); // Dismiss progress dialog in any case
+                    progressDialog.dismiss();
 
                     if (task.isSuccessful()) {
                         Uri downloadUrl = task.getResult();
                         String imageUrl = downloadUrl.toString();
 
-                        HashMap<String, Object> userMap = new HashMap<>();
-                        userMap.put("image", imageUrl);
+                        // Check if "image" child already exists under current user's UID
+                        DatabaseReference userRef = databaseReference.child(auth.getCurrentUser().getUid());
+                        userRef.addListenerForSingleValueEvent(new ValueEventListener() {
+                            @Override
+                            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                                if (snapshot.exists() && snapshot.hasChild("image")) {
+                                    // "image" child already exists, update its value
+                                    userRef.child("image").setValue(imageUrl)
+                                            .addOnCompleteListener(new OnCompleteListener<Void>() {
+                                                @Override
+                                                public void onComplete(@NonNull Task<Void> updateTask) {
+                                                    if (updateTask.isSuccessful()) {
+                                                        // Image URL updated successfully
+                                                        Toast.makeText(ProfilActivity.this, "Profile image updated", Toast.LENGTH_SHORT).show();
+                                                    } else {
+                                                        // Handle update failure
+                                                        Toast.makeText(ProfilActivity.this, "Error updating profile image", Toast.LENGTH_SHORT).show();
+                                                    }
+                                                }
+                                            });
+                                } else {
+                                    // "image" child doesn't exist, create it
+                                    HashMap<String, Object> userMap = new HashMap<>();
+                                    userMap.put("image", imageUrl);
 
-                        // Update user's image in database
-                        databaseReference.child(auth.getCurrentUser().getEmail()).updateChildren(userMap)
-                                .addOnCompleteListener(new OnCompleteListener<Void>() {
-                                    @Override
-                                    public void onComplete(@NonNull Task<Void> updateTask) {
-                                        if (updateTask.isSuccessful()) {
-                                            // Image upload and database update successful
-                                            Toast.makeText(ProfilActivity.this, "Profile image updated", Toast.LENGTH_SHORT).show();
-                                        } else {
-                                            // Handle database update failure
-                                            Toast.makeText(ProfilActivity.this, "Error updating profile image", Toast.LENGTH_SHORT).show();
-                                        }
-                                    }
-                                });
+                                    userRef.updateChildren(userMap)
+                                            .addOnCompleteListener(new OnCompleteListener<Void>() {
+                                                @Override
+                                                public void onComplete(@NonNull Task<Void> updateTask) {
+                                                    if (updateTask.isSuccessful()) {
+                                                        // "image" child created and image URL set
+                                                        Toast.makeText(ProfilActivity.this, "Profile image uploaded", Toast.LENGTH_SHORT).show();
+                                                    } else {
+                                                        // Handle creation failure
+                                                        Toast.makeText(ProfilActivity.this, "Error creating profile image", Toast.LENGTH_SHORT).show();
+                                                    }
+                                                }
+                                            });
+                                }
+                            }
+
+                            @Override
+                            public void onCancelled(@NonNull DatabaseError error) {
+                                // Handle onCancelled
+                                Toast.makeText(ProfilActivity.this, "Database error", Toast.LENGTH_SHORT).show();
+                            }
+                        });
                     } else {
                         // Handle download URL retrieval failure
                         Toast.makeText(ProfilActivity.this, "Error getting download URL", Toast.LENGTH_SHORT).show();
+                        Log.e("UploadProfileImage", "Error getting download URL", task.getException());
                     }
                 }
             });
@@ -302,88 +342,126 @@ public class ProfilActivity extends AppCompatActivity {
     }
 
 
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         imageUri=data.getData();
-        imageview.setImageURI(imageUri);
-        uploadProfileImage();
+        uploadProfileImage(imageUri);
     }
     private void updateUsername(String newUsername){
-        DatabaseReference usersRef = FirebaseDatabase.getInstance().getReference().child("users");
-        usersRef.child("name").setValue(newUsername)
-                .addOnSuccessListener(new OnSuccessListener<Void>() {
-                    @Override
-                    public void onSuccess(Void aVoid) {
-                        showUserData();
-                        Toast.makeText(ProfilActivity.this, "Username updated successfully", Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        Toast.makeText(ProfilActivity.this, "Failed to update username", Toast.LENGTH_SHORT).show();
-                    }
-                });
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        databaseReference= FirebaseDatabase.getInstance().getReference().child("users");
+        if(currentUser!=null){
+            databaseReference.child(currentUser.getUid()).child("name").setValue(newUsername)
+                    .addOnSuccessListener(new OnSuccessListener<Void>() {
+                        @Override
+                        public void onSuccess(Void aVoid) {
+                            showUserData();
+                            Toast.makeText(ProfilActivity.this, "Username updated successfully", Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .addOnFailureListener(new OnFailureListener() {
+                        @Override
+                        public void onFailure(@NonNull Exception e) {
+                            Toast.makeText(ProfilActivity.this, "Failed to update username", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+        }
+        else{
+            return;
+        }
+
 
     }
     private void updateEmail(String newEmail) {
         FirebaseAuth mAuth = FirebaseAuth.getInstance();
         FirebaseUser currentUser = mAuth.getCurrentUser();
         if (currentUser != null) {
-            currentUser.updateEmail(newEmail)
+            databaseReference= FirebaseDatabase.getInstance().getReference().child("users");
+            databaseReference.child(currentUser.getUid()).child("email").setValue(newEmail)
                     .addOnSuccessListener(new OnSuccessListener<Void>() {
                         @Override
                         public void onSuccess(Void aVoid) {
-                            showUserData();
-                            Toast.makeText(ProfilActivity.this, "Email updated successfully", Toast.LENGTH_SHORT).show();
-                        }
-                    })
-                    .addOnFailureListener(new OnFailureListener() {
-                        @Override
-                        public void onFailure(@NonNull Exception e) {
-                            Toast.makeText(ProfilActivity.this, "Failed to update email", Toast.LENGTH_SHORT).show();
-                        }
-                    });
-        }
-    }
-    private void updatePassword(String currentPassword, String newPassword) {
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (currentUser != null) {
-            AuthCredential credential = EmailAuthProvider.getCredential(currentUser.getEmail(), currentPassword);
-            currentUser.reauthenticate(credential)
-                    .addOnSuccessListener(new OnSuccessListener<Void>() {
-                        @Override
-                        public void onSuccess(Void aVoid) {
-                            currentUser.updatePassword(newPassword)
+                            currentUser.updateEmail(newEmail)
                                     .addOnSuccessListener(new OnSuccessListener<Void>() {
                                         @Override
                                         public void onSuccess(Void aVoid) {
                                             showUserData();
-                                            Toast.makeText(ProfilActivity.this, "Password updated successfully", Toast.LENGTH_SHORT).show();
+                                            Toast.makeText(ProfilActivity.this, "Email updated successfully", Toast.LENGTH_SHORT).show();
                                         }
                                     })
                                     .addOnFailureListener(new OnFailureListener() {
                                         @Override
                                         public void onFailure(@NonNull Exception e) {
-                                            Toast.makeText(ProfilActivity.this, "Failed to update password", Toast.LENGTH_SHORT).show();
+                                            Toast.makeText(ProfilActivity.this, "Failed to update email from the authentication", Toast.LENGTH_SHORT).show();
                                         }
                                     });
+                            return;
                         }
                     })
                     .addOnFailureListener(new OnFailureListener() {
                         @Override
                         public void onFailure(@NonNull Exception e) {
-                            Toast.makeText(ProfilActivity.this, "Authentication failed. Incorrect current password.", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(ProfilActivity.this, "Failed to update email from the real time database", Toast.LENGTH_SHORT).show();
                         }
                     });
+
         }
+    }
+    private void updatePassword(String currentPassword, String newPassword) {
+            FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+            if (currentUser != null) {
+                // Update password in Firebase Authentication
+                AuthCredential credential = EmailAuthProvider.getCredential(currentUser.getEmail(), currentPassword);
+                currentUser.reauthenticate(credential)
+                        .addOnSuccessListener(new OnSuccessListener<Void>() {
+                            @Override
+                            public void onSuccess(Void aVoid) {
+                                currentUser.updatePassword(newPassword)
+                                        .addOnSuccessListener(new OnSuccessListener<Void>() {
+                                            @Override
+                                            public void onSuccess(Void aVoid) {
+                                                Toast.makeText(ProfilActivity.this, "Password updated successfully", Toast.LENGTH_SHORT).show();
+                                            }
+                                        })
+                                        .addOnFailureListener(new OnFailureListener() {
+                                            @Override
+                                            public void onFailure(@NonNull Exception e) {
+                                                Toast.makeText(ProfilActivity.this, "Failed to update password in the authentication", Toast.LENGTH_SHORT).show();
+                                            }
+                                        });
+                            }
+                        })
+                        .addOnFailureListener(new OnFailureListener() {
+                            @Override
+                            public void onFailure(@NonNull Exception e) {
+                                Toast.makeText(ProfilActivity.this, "Authentication failed. Incorrect current password.", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+
+                // Update password in Firebase Realtime Database (even though it's not recommended)
+                DatabaseReference databaseReference = FirebaseDatabase.getInstance().getReference().child("users");
+                databaseReference.child(currentUser.getUid()).child("password").setValue(newPassword)
+                        .addOnSuccessListener(new OnSuccessListener<Void>() {
+                            @Override
+                            public void onSuccess(Void aVoid) {
+                                showUserData();
+                            }
+                        })
+                        .addOnFailureListener(new OnFailureListener() {
+                            @Override
+                            public void onFailure(@NonNull Exception e) {
+                                Toast.makeText(ProfilActivity.this, "error in the realtime database.", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+            }
     }
     private void checkPassword(String currentPassword, final String newPassword) {
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser != null) {
-            DatabaseReference usersRef = FirebaseDatabase.getInstance().getReference().child("users");
-            usersRef.addListenerForSingleValueEvent(new ValueEventListener() {
+            databaseReference= FirebaseDatabase.getInstance().getReference().child("users");
+            databaseReference.child(currentUser.getUid()).addListenerForSingleValueEvent(new ValueEventListener() {
                 @Override
                 public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
                     if (dataSnapshot.exists()) {
@@ -410,14 +488,13 @@ public class ProfilActivity extends AppCompatActivity {
 
     public void showUserData(){
             FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+            databaseReference = FirebaseDatabase.getInstance().getReference().child("users");
             if (currentUser != null) {
-                String email = currentUser.getEmail();
-                DatabaseReference usersRef = FirebaseDatabase.getInstance().getReference().child("users").child(email);
-                usersRef.addListenerForSingleValueEvent(new ValueEventListener() {
+                databaseReference.child(currentUser.getUid()).addListenerForSingleValueEvent(new ValueEventListener() {
                     @Override
                     public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
                         if (dataSnapshot.exists()) {
-                            String userName = dataSnapshot.child("username").getValue(String.class);
+                            String userName = dataSnapshot.child("name").getValue(String.class);
                             String userEmail = dataSnapshot.child("email").getValue(String.class);
                             // Mettez à jour les champs TextView avec les données récupérées
                             textViewUsername.setText(userName);
@@ -449,6 +526,8 @@ public class ProfilActivity extends AppCompatActivity {
     }
 
 
-
-
+    public void logout(View view) {
+        Intent i = new Intent(this,login.class);
+        startActivity(i);
+    }
 }
